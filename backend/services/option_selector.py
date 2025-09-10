@@ -1,74 +1,80 @@
 # backend/services/option_selector.py
 
-import numpy as np
 import requests
+import json
 from datetime import datetime
-from model import y_pred_percent, df
+import pytz
 
-def fetch_option_chain(symbol="BANKNIFTY"):
-    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Referer": "https://www.nseindia.com",
-        "Connection": "keep-alive"
-    }
+NSE_OPTION_CHAIN_URL = "https://www.nseindia.com/api/option-chain-indices?symbol=BANKNIFTY"
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+}
+
+def fetch_option_chain():
+    """Fetch latest BankNifty option chain from NSE."""
     session = requests.Session()
-    session.get("https://www.nseindia.com", headers=headers)  # establishes cookies
-    resp = session.get(url, headers=headers)
-    resp.raise_for_status()
-    return resp.json()
+    session.headers.update(HEADERS)
 
-def parse_chain(json_data):
-    data = json_data['records']['data']
-    chain = {}
-    for rec in data:
-        strike = rec['strikePrice']
-        ce_ltp = rec.get('CE', {}).get('lastPrice', None)
-        pe_ltp = rec.get('PE', {}).get('lastPrice', None)
-        chain[strike] = {"CE": ce_ltp, "PE": pe_ltp}
-    return chain
+    resp = session.get(NSE_OPTION_CHAIN_URL)
+    if resp.status_code != 200:
+        raise Exception("Failed to fetch option chain data")
 
-def suggest_option(y_pred_percent, df, budget, horizon=6, threshold=0.05):
-    last_preds = y_pred_percent[-horizon:]
-    avg_move = np.mean(last_preds)
+    data = resp.json()
+    return data["records"]["data"]
 
-    current_price = df["Close"].iloc[-1]
-    atm_strike = round(current_price / 100) * 100
+def get_atm_strike(spot_price, strikes):
+    """Find nearest ATM strike price."""
+    return min(strikes, key=lambda x: abs(x - spot_price))
 
-    if avg_move > threshold:
-        option_type = "CE"
-    elif avg_move < -threshold:
-        option_type = "PE"
+def suggest_option(avg_prediction: float, budget: float):
+    """
+    Suggest CALL or PUT option based on predicted move.
+    avg_prediction: average % change predicted (positive → CALL, negative → PUT)
+    budget: user budget in INR
+    """
+    data = fetch_option_chain()
+
+    # Get spot price
+    spot_price = data[0]["PE"]["underlyingValue"]  # spot price
+    strikes = [d["strikePrice"] for d in data if "CE" in d and "PE" in d]
+
+    atm_strike = get_atm_strike(spot_price, strikes)
+
+    if avg_prediction > 0:
+        option_type = "CE"  # CALL
     else:
-        return {"preds": last_preds.tolist(), "avg_move": float(avg_move),
-                "suggestion": f"NO TRADE (ATM {atm_strike})"}
+        option_type = "PE"  # PUT
 
-    chain_json = fetch_option_chain("BANKNIFTY")
-    chain = parse_chain(chain_json)
+    # Find option chain entry for ATM
+    atm_data = [d for d in data if d["strikePrice"] == atm_strike][0]
+    option_info = atm_data[option_type]
 
-    affordable = [(strike, prices[option_type]) for strike, prices in chain.items()
-                  if prices[option_type] is not None and prices[option_type] <= budget]
+    ltp = option_info["lastPrice"]
+    lot_size = 15  # BankNifty lot size
+    cost = ltp * lot_size
 
-    if not affordable:
-        return {"preds": last_preds.tolist(), "avg_move": float(avg_move),
-                "suggestion": "NO AFFORDABLE OPTION within budget"}
-
-    best_strike, premium = min(affordable, key=lambda x: abs(x[0] - atm_strike))
-    suggestion = f"BUY {option_type} {best_strike} (Premium ~ ₹{premium})"
+    if cost > budget:
+        return {
+            "decision": f"{option_type} at {atm_strike} not affordable with ₹{budget}",
+            "required": cost,
+            "ltp": ltp
+        }
 
     return {
-        "preds": last_preds.tolist(),
-        "avg_move": float(avg_move),
-        "strike": int(best_strike),
-        "premium": float(premium),
-        "suggestion": suggestion
+        "decision": f"BUY {option_type} at strike {atm_strike}",
+        "strike": atm_strike,
+        "ltp": ltp,
+        "lot_size": lot_size,
+        "total_cost": cost,
+        "spot": spot_price,
+        "prediction": avg_prediction
     }
 
+
 if __name__ == "__main__":
-    budget = float(input("Enter your budget in ₹: "))
-    result = suggest_option(y_pred_percent, df, budget)
-    print("\nPredictions:", result.get("preds"))
-    print("Average move:", result.get("avg_move"), "%")
-    print("Suggested Action:", result["suggestion"])
+    # Example: user inputs prediction & budget
+    avg_prediction = float(input("Enter avg % prediction (e.g. 0.5 for +0.5%): "))
+    budget = float(input("Enter your budget in INR: "))
+
+    suggestion = suggest_option(avg_prediction, budget)
+    print("\n📊 Option Suggestion:", json.dumps(suggestion, indent=2))

@@ -7,8 +7,8 @@ from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from datetime import datetime, timedelta
 
-from preprocess import preprocess_data
-from lstm_prepare import prepare_data
+from .preprocess import preprocess_data
+from .lstm_prepare import prepare_data
 
 # Parameters
 SEQ_LENGTH = 60

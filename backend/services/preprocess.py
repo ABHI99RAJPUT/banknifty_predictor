@@ -1,7 +1,7 @@
 import pandas as pd
 import ta
 from datetime import datetime
-from data_fetcher import get_data_for_date
+from .data_fetcher import get_data_for_date
 
 MARKET_START = "09:15"
 MARKET_END = "15:30"
