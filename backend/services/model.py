@@ -13,7 +13,7 @@ from lstm_prepare import prepare_data
 # Parameters
 SEQ_LENGTH = 60
 INTERVAL = "5m"
-EPOCHS = 50
+EPOCHS = 30
 BATCH_SIZE = 32
 N_DAYS = 30
 
