@@ -20,7 +20,7 @@ N_DAYS = 30
 # Fetch last N trading days robustly
 dfs = []
 valid_days = 0
-day = datetime.now()
+day = date.now()
 
 while valid_days < N_DAYS:
     try:
